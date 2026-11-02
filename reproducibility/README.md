@@ -120,3 +120,19 @@ Tables in `$OUT/analysis/`:
   sessions per subject).
 - `qc/pipelines.csv`: per session, Tractoflow vs sf-tractomics (Dice of
   masks and tractogram densities, r and WM means of maps).
+
+
+
+
+## Command run on rorqual
+git clone -b scilpy_2.2.2 git@github.com:Manonedde/tractoflow.git
+git clone -b scilpy_2.2.2 git@github.com:Manonedde/sf-tractomics.git
+export SFTRACTOMICS_DIR=$PWD/sf-tractomics IMG_DIR=$PROJECT/containers
+export SRC_BIDS=/home/medde/projects/rrg-descotea/datasets/CHUS/myelo_inferno
+cd tractoflow/reproducibility
+./setup_login_node.sh $IMG_DIR $SRC_BIDS
+python3 fix_intendedfor.py $SRC_BIDS                                    # lire le rapport
+python3 fix_intendedfor.py $SRC_BIDS --out_dir $SCRATCH/repro_study/bids
+export BIDS=$SCRATCH/repro_study/bids
+./check_bids.sh $BIDS $SCRATCH/check_bids                               # 0 mismatch attendu
+./submit_test_retest.sh runretest $BIDS $SCRATCH/repro_study 3
