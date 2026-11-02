@@ -36,9 +36,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from variability import find_files, list_sessions  # noqa: E402
 
 # Reference palette (dataviz skill): light surface, ink, categorical slots 1-2
-SURFACE, INK, INK2, MUTED = "#fcfcfb", "#0b0b0b", "#52514e", "#898781"
+SURFACE, INK, INK2, MUTED = "#f3f372", "#0b0b0b", "#52514e", "#4D411E"
 GRID, AXIS = "#e1e0d9", "#c3c2b7"
-COLORS = {"tractoflow": "#2a78d6", "sftractomics": "#eb6834"}
+COLORS = {"tractoflow": "#204d85", "sftractomics": "#d47e0e"}
 LABELS = {"tractoflow": "Tractoflow", "sftractomics": "sf-tractomics"}
 DIVERGING = LinearSegmentedColormap.from_list(
     "div", ["#2a78d6", "#f0efec", "#e34948"])
