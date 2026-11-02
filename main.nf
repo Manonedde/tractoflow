@@ -211,7 +211,7 @@ else if (params.bids || params.bids_config){
             clean_flag = params.clean_bids ? '--clean ' : ''
 
             """
-            scil_validate_bids.py $bids_folder tractoflow_bids_struct.json\
+            scil_bids_validate $bids_folder tractoflow_bids_struct.json\
                 --readout $params.readout $clean_flag\
                 ${!fs_folder.empty() ? "--fs $fs_folder" : ""}\
                 ${!bidsignore.empty() ? "--bids_ignore $bidsignore" : ""}\
@@ -484,11 +484,11 @@ process Bet_Prelim_DWI {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_image_math.py convert $dwi $dwi --data_type float32 -f
-    scil_extract_b0.py $dwi $bval $bvec ${sid}__b0.nii.gz --mean\
-        --b0_thr $params.b0_thr_extract_b0 --force_b0_threshold
+    scil_volume_math convert $dwi $dwi --data_type float32 -f
+    scil_dwi_extract_b0 $dwi $bval $bvec ${sid}__b0.nii.gz --mean\
+        --b0_threshold $params.b0_thr_extract_b0 --skip_b0_check
     bet ${sid}__b0.nii.gz ${sid}__b0_bet.nii.gz -m -R -f $params.bet_prelim_f
-    scil_image_math.py convert ${sid}__b0_bet_mask.nii.gz ${sid}__b0_bet_mask.nii.gz --data_type uint8 -f
+    scil_volume_math convert ${sid}__b0_bet_mask.nii.gz ${sid}__b0_bet_mask.nii.gz --data_type uint8 -f
     maskfilter ${sid}__b0_bet_mask.nii.gz dilate ${sid}__b0_bet_mask_dilated.nii.gz\
         --npass $params.dilate_b0_mask_prelim_brain_extraction -nthreads 1
     mrcalc ${sid}__b0.nii.gz ${sid}__b0_bet_mask_dilated.nii.gz\
@@ -610,8 +610,8 @@ process Prepare_for_Topup {
 
   script:
   """
-    scil_extract_b0.py $dwi $bval $bvec ${sid}_${rev}b0_mean.nii.gz --mean\
-        --b0_thr $params.b0_thr_extract_b0 --force_b0_threshold
+    scil_dwi_extract_b0 $dwi $bval $bvec ${sid}_${rev}b0_mean.nii.gz --mean\
+        --b0_threshold $params.b0_thr_extract_b0 --skip_b0_check
   """
 }
 
@@ -654,13 +654,13 @@ process Topup {
       export OPENBLAS_NUM_THREADS=1
       export ANTS_RANDOM_SEED=1234
 
-      scil_image_math.py convert $rev_b0 $rev_b0 -f --data_type float32
-      scil_image_math.py convert $b0 $b0 -f --data_type float32
-      scil_image_math.py concatenate $rev_b0 $rev_b0 ${sid}__concatenated_rev_b0.nii.gz
-      scil_image_math.py mean ${sid}__concatenated_rev_b0.nii.gz ${sid}__rev_b0_mean.nii.gz
+      scil_volume_math convert $rev_b0 $rev_b0 -f --data_type float32
+      scil_volume_math convert $b0 $b0 -f --data_type float32
+      scil_volume_math concatenate $rev_b0 $rev_b0 ${sid}__concatenated_rev_b0.nii.gz
+      scil_volume_math mean ${sid}__concatenated_rev_b0.nii.gz ${sid}__rev_b0_mean.nii.gz
       antsRegistrationSyNQuick.sh -d 3 -f $b0 -m ${sid}__rev_b0_mean.nii.gz -o output -t r -e 1
       mv outputWarped.nii.gz ${sid}__rev_b0_warped.nii.gz
-      scil_prepare_topup_command.py $b0 ${sid}__rev_b0_warped.nii.gz\
+      scil_dwi_prepare_topup_command $b0 ${sid}__rev_b0_warped.nii.gz\
           --config $params.config_topup\
           --encoding_direction $encoding\
           --readout $readout --out_prefix $params.prefix_topup\
@@ -707,11 +707,11 @@ process Prepare_dwi_for_eddy {
 
   script:
   """
-    scil_concatenate_dwi.py ${sid}__concatenated_dwi.nii.gz ${sid}__concatenated_dwi.bval ${sid}__concatenated_dwi.bvec -f\
+    scil_dwi_concatenate ${sid}__concatenated_dwi.nii.gz ${sid}__concatenated_dwi.bval ${sid}__concatenated_dwi.bvec -f\
       --in_dwis ${dwi} ${rev_dwi} --in_bvals ${bval} ${rev_bval}\
       --in_bvecs ${bvec} ${rev_bvec}
 
-    rev_number_dir=\$(scil_print_header.py ${rev_dwi} --key dim | sed "s/  / /g" | sed "s/  / /g" | rev | cut -d' ' -f4-4 | rev)
+    rev_number_dir=\$(scil_header_print_info ${rev_dwi} --keys dim | sed "s/  / /g" | sed "s/  / /g" | rev | cut -d' ' -f4-4 | rev)
   """
 }
 
@@ -772,7 +772,7 @@ process Eddy_Topup {
         mrconvert $b0s_corrected b0_corrected.nii.gz -coord 3 0 -axes 0,1,2 -nthreads 1
         bet b0_corrected.nii.gz ${sid}__b0_bet.nii.gz -m -R\
             -f $params.bet_topup_before_eddy_f
-        scil_prepare_eddy_command.py $dwi $bval $bvec ${sid}__b0_bet_mask.nii.gz\
+        scil_dwi_prepare_eddy_command $dwi $bval $bvec ${sid}__b0_bet_mask.nii.gz\
             --topup $params.prefix_topup --eddy_cmd $params.eddy_cmd\
             --b0_thr $params.b0_thr_extract_b0\
             --encoding_direction $encoding\
@@ -789,7 +789,7 @@ process Eddy_Topup {
 	   mv dwi_eddy_corrected.eddy_rotated_bvecs ${sid}__dwi_eddy_corrected.bvec
           mv $bval ${sid}__bval_eddy
 	else
-	   scil_validate_and_correct_eddy_gradients.py dwi_eddy_corrected.eddy_rotated_bvecs $bval ${number_rev_dwi} ${sid}__dwi_eddy_corrected.bvec ${sid}__bval_eddy
+	   scil_gradients_validate_correct_eddy dwi_eddy_corrected.eddy_rotated_bvecs $bval ${number_rev_dwi} ${sid}__dwi_eddy_corrected.bvec ${sid}__bval_eddy
 	fi
 	"""
 }
@@ -831,7 +831,7 @@ process Eddy {
         export OMP_NUM_THREADS=$task.cpus
         export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=$task.cpus
         export OPENBLAS_NUM_THREADS=1
-        scil_prepare_eddy_command.py $dwi $bval $bvec $mask\
+        scil_dwi_prepare_eddy_command $dwi $bval $bvec $mask\
             --eddy_cmd $params.eddy_cmd --b0_thr $params.b0_thr_extract_b0\
             --encoding_direction $encoding\
             --readout $readout --out_script --fix_seed\
@@ -893,10 +893,10 @@ process Bet_DWI {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_extract_b0.py $dwi $bval $bvec ${sid}__b0_no_bet.nii.gz --mean\
-            --b0_thr $params.b0_thr_extract_b0 --force_b0_threshold
+    scil_dwi_extract_b0 $dwi $bval $bvec ${sid}__b0_no_bet.nii.gz --mean\
+            --b0_threshold $params.b0_thr_extract_b0 --skip_b0_check
     bet ${sid}__b0_no_bet.nii.gz ${sid}__b0_bet.nii.gz -m -R -f $params.bet_dwi_final_f
-    scil_image_math.py convert ${sid}__b0_bet_mask.nii.gz ${sid}__b0_bet_mask.nii.gz --data_type uint8 -f
+    scil_volume_math convert ${sid}__b0_bet_mask.nii.gz ${sid}__b0_bet_mask.nii.gz --data_type uint8 -f
     mrcalc $dwi ${sid}__b0_bet_mask.nii.gz -mult ${sid}__dwi_bet.nii.gz -quiet -nthreads 1
     """
 }
@@ -920,7 +920,7 @@ process N4_DWI {
     N4BiasFieldCorrection -i $b0\
         -o [${sid}__b0_n4.nii.gz, bias_field_b0.nii.gz]\
         -c [300x150x75x50, 1e-6] -v 1
-    scil_apply_bias_field_on_dwi.py $dwi bias_field_b0.nii.gz\
+    scil_dwi_apply_bias_field $dwi bias_field_b0.nii.gz\
         ${sid}__dwi_n4.nii.gz --mask $b0_mask -f
     """
 }
@@ -947,13 +947,13 @@ process Crop_DWI {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_crop_volume.py $dwi ${sid}__dwi_cropped.nii.gz -f\
-        --output_bbox dwi_boundingBox.pkl -f
-    scil_crop_volume.py $b0 ${sid}__b0_cropped.nii.gz\
-        --input_bbox dwi_boundingBox.pkl -f
-    scil_crop_volume.py $b0_mask ${sid}__b0_mask_cropped.nii.gz\
-        --input_bbox dwi_boundingBox.pkl -f
-    scil_image_math.py convert ${sid}__b0_mask_cropped.nii.gz ${sid}__b0_mask_cropped.nii.gz --data_type uint8 -f
+    scil_volume_crop $dwi ${sid}__dwi_cropped.nii.gz -f\
+        --output_bbox dwi_boundingBox.json -f
+    scil_volume_crop $b0 ${sid}__b0_cropped.nii.gz\
+        --input_bbox dwi_boundingBox.json -f
+    scil_volume_crop $b0_mask ${sid}__b0_mask_cropped.nii.gz\
+        --input_bbox dwi_boundingBox.json -f
+    scil_volume_math convert ${sid}__b0_mask_cropped.nii.gz ${sid}__b0_mask_cropped.nii.gz --data_type uint8 -f
     """
 }
 
@@ -974,7 +974,7 @@ process Denoise_T1 {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_run_nlmeans.py $t1 ${sid}__t1_denoised.nii.gz 1 \
+    scil_denoising_nlmeans $t1 ${sid}__t1_denoised.nii.gz --basic_sigma --number_coils 1 \
         --processes $task.cpus -f
     """
 }
@@ -1021,7 +1021,7 @@ process Resample_T1 {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_resample_volume.py $t1 ${sid}__t1_resampled.nii.gz \
+    scil_volume_resample $t1 ${sid}__t1_resampled.nii.gz \
         --voxel_size $params.t1_resolution \
         --interp  $params.t1_interpolation
     """
@@ -1050,7 +1050,7 @@ process Bet_T1 {
     export ANTS_RANDOM_SEED=1234
     antsBrainExtraction.sh -d 3 -a $t1 -e $params.template_t1/t1_template.nii.gz\
         -o bet/ -m $params.template_t1/t1_brain_probability_map.nii.gz -u 0
-    scil_image_math.py convert bet/BrainExtractionMask.nii.gz ${sid}__t1_bet_mask.nii.gz --data_type uint8
+    scil_volume_math convert bet/BrainExtractionMask.nii.gz ${sid}__t1_bet_mask.nii.gz --data_type uint8
     mrcalc $t1 ${sid}__t1_bet_mask.nii.gz -mult ${sid}__t1_bet.nii.gz -nthreads 1
     """
 }
@@ -1070,11 +1070,11 @@ process Crop_T1 {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_crop_volume.py $t1 ${sid}__t1_bet_cropped.nii.gz\
-        --output_bbox t1_boundingBox.pkl -f
-    scil_crop_volume.py $t1_mask ${sid}__t1_bet_mask_cropped.nii.gz\
-        --input_bbox t1_boundingBox.pkl -f
-    scil_image_math.py convert ${sid}__t1_bet_mask_cropped.nii.gz ${sid}__t1_bet_mask_cropped.nii.gz --data_type uint8 -f
+    scil_volume_crop $t1 ${sid}__t1_bet_cropped.nii.gz\
+        --output_bbox t1_boundingBox.json -f
+    scil_volume_crop $t1_mask ${sid}__t1_bet_mask_cropped.nii.gz\
+        --input_bbox t1_boundingBox.json -f
+    scil_volume_math convert ${sid}__t1_bet_mask_cropped.nii.gz ${sid}__t1_bet_mask_cropped.nii.gz --data_type uint8 -f
     """
 }
 
@@ -1099,11 +1099,11 @@ process Normalize_DWI {
       export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
       export OMP_NUM_THREADS=1
       export OPENBLAS_NUM_THREADS=1
-      scil_extract_dwi_shell.py $dwi \
+      scil_dwi_extract_shell $dwi \
           $bval $bvec $params.dti_shells dwi_dti.nii.gz \
           bval_dti bvec_dti -t $params.dwi_shell_tolerance
-      scil_compute_dti_metrics.py dwi_dti.nii.gz bval_dti bvec_dti --mask $mask\
-          --not_all --fa fa.nii.gz --force_b0_threshold
+      scil_dti_metrics dwi_dti.nii.gz bval_dti bvec_dti --mask $mask\
+          --not_all --fa fa.nii.gz --skip_b0_check
       mrthreshold fa.nii.gz ${sid}_fa_wm_mask.nii.gz -abs $params.fa_mask_threshold -nthreads 1
       dwinormalise individual $dwi ${sid}_fa_wm_mask.nii.gz ${sid}__dwi_normalized.nii.gz\
           -fslgrad $bvec $bval -nthreads 1
@@ -1116,11 +1116,11 @@ process Normalize_DWI {
 
         shells=\$(cut -d ' ' --output-delimiter=\$'\\n' -f 1- $bval | awk -F' ' '{v=int(\$1)}{if(v<=$params.max_dti_shell_value)print v}' | uniq)
 
-        scil_extract_dwi_shell.py $dwi \
+        scil_dwi_extract_shell $dwi \
             $bval $bvec \$shells dwi_dti.nii.gz \
             bval_dti bvec_dti -t $params.dwi_shell_tolerance
-        scil_compute_dti_metrics.py dwi_dti.nii.gz bval_dti bvec_dti --mask $mask\
-            --not_all --fa fa.nii.gz --force_b0_threshold
+        scil_dti_metrics dwi_dti.nii.gz bval_dti bvec_dti --mask $mask\
+            --not_all --fa fa.nii.gz --skip_b0_check
         mrthreshold fa.nii.gz ${sid}_fa_wm_mask.nii.gz -abs $params.fa_mask_threshold -nthreads 1
         dwinormalise individual $dwi ${sid}_fa_wm_mask.nii.gz ${sid}__dwi_normalized.nii.gz\
             -fslgrad $bvec $bval -nthreads 1
@@ -1149,12 +1149,12 @@ process Resample_DWI {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_resample_volume.py $dwi \
+    scil_volume_resample $dwi \
         dwi_resample.nii.gz \
         --voxel_size $params.dwi_resolution \
         --interp  $params.dwi_interpolation
     fslmaths dwi_resample.nii.gz -thr 0 dwi_resample_clipped.nii.gz
-    scil_resample_volume.py $mask \
+    scil_volume_resample $mask \
         mask_resample.nii.gz \
         --ref dwi_resample.nii.gz \
         --enforce_dimensions \
@@ -1192,8 +1192,8 @@ process Extract_B0 {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_extract_b0.py $dwi $bval $bvec ${sid}__b0_resampled.nii.gz --mean\
-        --b0_thr $params.b0_thr_extract_b0 --force_b0_threshold
+    scil_dwi_extract_b0 $dwi $bval $bvec ${sid}__b0_resampled.nii.gz --mean\
+        --b0_threshold $params.b0_thr_extract_b0 --skip_b0_check
     mrthreshold ${sid}__b0_resampled.nii.gz ${sid}__b0_mask_resampled.nii.gz\
         --abs 0.00001 -nthreads 1
     """
@@ -1223,7 +1223,7 @@ process Extract_SH_Fitting_Shell {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_extract_dwi_shell.py $dwi \
+    scil_dwi_extract_shell $dwi \
         $bval $bvec $params.sh_fitting_shells ${sid}__dwi_sh_fitting.nii.gz \
         ${sid}__bval_sh_fitting ${sid}__bvec_sh_fitting -t $params.dwi_shell_tolerance -f
     """
@@ -1246,7 +1246,7 @@ process SH_Fitting {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_compute_sh_from_signal.py --sh_order $params.sh_fitting_order --sh_basis $params.sh_fitting_basis $dwi $bval $bvec ${sid}__dwi_sh.nii.gz
+    scil_dwi_to_sh --sh_order $params.sh_fitting_order --sh_basis $params.sh_fitting_basis $dwi $bval $bvec ${sid}__dwi_sh.nii.gz
     """
 }
 
@@ -1274,7 +1274,7 @@ process Extract_DTI_Shell {
         export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
         export OMP_NUM_THREADS=1
         export OPENBLAS_NUM_THREADS=1
-        scil_extract_dwi_shell.py $dwi \
+        scil_dwi_extract_shell $dwi \
           $bval $bvec $params.dti_shells ${sid}__dwi_dti.nii.gz \
           ${sid}__bval_dti ${sid}__bvec_dti -t $params.dwi_shell_tolerance -f
       """
@@ -1287,7 +1287,7 @@ process Extract_DTI_Shell {
         shells=\$(cut -d ' ' --output-delimiter=\$'\\n' -f 1- $bval | \
                 awk -F' ' '{v=int(\$1)}{if(v<=$params.max_dti_shell_value)print v}' | uniq)
 
-        scil_extract_dwi_shell.py $dwi \
+        scil_dwi_extract_shell $dwi \
           $bval $bvec \$shells ${sid}__dwi_dti.nii.gz \
           ${sid}__bval_dti ${sid}__bvec_dti -t $params.dwi_shell_tolerance -f
       """
@@ -1341,7 +1341,7 @@ process DTI_Metrics {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_compute_dti_metrics.py $dwi $bval $bvec --mask $b0_mask\
+    scil_dti_metrics $dwi $bval $bvec --mask $b0_mask\
         --ad ${sid}__ad.nii.gz --evecs ${sid}__evecs.nii.gz\
         --evals ${sid}__evals.nii.gz --fa ${sid}__fa.nii.gz\
         --ga ${sid}__ga.nii.gz --rgb ${sid}__rgb.nii.gz\
@@ -1351,7 +1351,7 @@ process DTI_Metrics {
         --non-physical ${sid}__nonphysical.nii.gz\
         --pulsation ${sid}__pulsation.nii.gz\
         --residual ${sid}__residual.nii.gz\
-        -f --force_b0_threshold
+        -f --skip_b0_check
     """
 }
 
@@ -1378,7 +1378,7 @@ process Extract_FODF_Shell {
         export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
         export OMP_NUM_THREADS=1
         export OPENBLAS_NUM_THREADS=1
-        scil_extract_dwi_shell.py $dwi \
+        scil_dwi_extract_shell $dwi \
           $bval $bvec $params.fodf_shells ${sid}__dwi_fodf.nii.gz \
           ${sid}__bval_fodf ${sid}__bvec_fodf -t $params.dwi_shell_tolerance -f
       """
@@ -1392,7 +1392,7 @@ process Extract_FODF_Shell {
       awk -F' ' '{v=int(\$1)}{if(v>=$params.min_fodf_shell_value|| \
       v<=$params.b0_thr_extract_b0)print v}' | uniq)
 
-      scil_extract_dwi_shell.py $dwi \
+      scil_dwi_extract_shell $dwi \
         $bval $bvec \$shells ${sid}__dwi_fodf.nii.gz \
         ${sid}__bval_fodf ${sid}__bvec_fodf -t $params.dwi_shell_tolerance -f
       """
@@ -1447,7 +1447,7 @@ process Register_T1 {
     antsApplyTransforms -d 3 -i $t1_mask -r ${sid}__t1_warped.nii.gz \
         -o ${sid}__t1_mask_warped.nii.gz -n NearestNeighbor \
         -t ${sid}__output1Warp.nii.gz ${sid}__output0GenericAffine.mat
-    scil_image_math.py convert ${sid}__t1_mask_warped.nii.gz ${sid}__t1_mask_warped.nii.gz --data_type uint8 -f
+    scil_volume_math convert ${sid}__t1_mask_warped.nii.gz ${sid}__t1_mask_warped.nii.gz --data_type uint8 -f
     """
 }
 
@@ -1503,23 +1503,23 @@ process Segment_Freesurfer {
     mkdir wmparc_desikan/
     mkdir wmparc_subcortical/
     mkdir aparc+aseg_subcortical/
-    scil_image_math.py convert $aparc aparc+aseg_int16.nii.gz --data_type int16 -f
-    scil_image_math.py convert $wmparc wmparc_int16.nii.gz --data_type int16 -f
+    scil_volume_math convert $aparc aparc+aseg_int16.nii.gz --data_type int16 -f
+    scil_volume_math convert $wmparc wmparc_int16.nii.gz --data_type int16 -f
 
-    scil_split_volume_by_labels.py wmparc_int16.nii.gz --scilpy_lut freesurfer_desikan_killiany --out_dir wmparc_desikan
-    scil_split_volume_by_labels.py wmparc_int16.nii.gz --scilpy_lut freesurfer_subcortical --out_dir wmparc_subcortical
-    scil_split_volume_by_labels.py aparc+aseg_int16.nii.gz --scilpy_lut freesurfer_subcortical --out_dir aparc+aseg_subcortical
+    scil_labels_split_volume_from_lut wmparc_int16.nii.gz --scilpy_lut freesurfer_desikan_killiany --out_dir wmparc_desikan
+    scil_labels_split_volume_from_lut wmparc_int16.nii.gz --scilpy_lut freesurfer_subcortical --out_dir wmparc_subcortical
+    scil_labels_split_volume_from_lut aparc+aseg_int16.nii.gz --scilpy_lut freesurfer_subcortical --out_dir aparc+aseg_subcortical
 
-    scil_image_math.py union wmparc_desikan/*\
+    scil_volume_math union wmparc_desikan/*\
                              wmparc_subcortical/right-cerebellum-cortex.nii.gz\
                              wmparc_subcortical/left-cerebellum-cortex.nii.gz\
                              mask_cortex_m.nii.gz -f
-    scil_image_math.py union wmparc_subcortical/corpus-callosum-*\
+    scil_volume_math union wmparc_subcortical/corpus-callosum-*\
                              aparc+aseg_subcortical/*white-matter*\
                              wmparc_subcortical/brain-stem.nii.gz\
                              aparc+aseg_subcortical/*ventraldc*\
                              mask_wm_m.nii.gz -f
-    scil_image_math.py union wmparc_subcortical/*thalamus*\
+    scil_volume_math union wmparc_subcortical/*thalamus*\
                              wmparc_subcortical/*putamen*\
                              wmparc_subcortical/*pallidum*\
                              wmparc_subcortical/*hippocampus*\
@@ -1528,26 +1528,26 @@ process Segment_Freesurfer {
                              wmparc_subcortical/*accumbens*\
                              wmparc_subcortical/*plexus*\
                              mask_nuclei_m.nii.gz -f
-    scil_image_math.py union wmparc_subcortical/*-lateral-ventricle.nii.gz\
+    scil_volume_math union wmparc_subcortical/*-lateral-ventricle.nii.gz\
                              wmparc_subcortical/*-inferior-lateral-ventricle.nii.gz\
                              wmparc_subcortical/cerebrospinal-fluid.nii.gz\
                              wmparc_subcortical/*th-ventricle.nii.gz\
                              mask_csf_1_m.nii.gz -f
-    scil_image_math.py lower_threshold mask_wm_m.nii.gz 0.1\
+    scil_volume_math lower_threshold mask_wm_m.nii.gz 0.1\
                                           ${sid}__mask_wm_bin.nii.gz -f
-    scil_image_math.py lower_threshold mask_cortex_m.nii.gz 0.1\
+    scil_volume_math lower_threshold mask_cortex_m.nii.gz 0.1\
                                           ${sid}__mask_gm.nii.gz -f
-    scil_image_math.py lower_threshold mask_nuclei_m.nii.gz 0.1\
+    scil_volume_math lower_threshold mask_nuclei_m.nii.gz 0.1\
                                           ${sid}__mask_nuclei_bin.nii.gz -f
-    scil_image_math.py lower_threshold mask_csf_1_m.nii.gz 0.1\
+    scil_volume_math lower_threshold mask_csf_1_m.nii.gz 0.1\
                                           ${sid}__mask_csf.nii.gz -f
-    scil_image_math.py addition ${sid}__mask_wm_bin.nii.gz\
+    scil_volume_math addition ${sid}__mask_wm_bin.nii.gz\
                                 ${sid}__mask_nuclei_bin.nii.gz\
                                 ${sid}__mask_wm.nii.gz --data_type int16
 
-    scil_image_math.py convert ${sid}__mask_wm.nii.gz ${sid}__mask_wm.nii.gz --data_type uint8 -f
-    scil_image_math.py convert ${sid}__mask_gm.nii.gz ${sid}__mask_gm.nii.gz --data_type uint8 -f
-    scil_image_math.py convert ${sid}__mask_csf.nii.gz ${sid}__mask_csf.nii.gz --data_type uint8 -f
+    scil_volume_math convert ${sid}__mask_wm.nii.gz ${sid}__mask_wm.nii.gz --data_type uint8 -f
+    scil_volume_math convert ${sid}__mask_gm.nii.gz ${sid}__mask_gm.nii.gz --data_type uint8 -f
+    scil_volume_math convert ${sid}__mask_csf.nii.gz ${sid}__mask_csf.nii.gz --data_type uint8 -f
     """
 }
 
@@ -1574,9 +1574,9 @@ process Segment_Tissues {
     export OPENBLAS_NUM_THREADS=1
     fast -t 1 -n $params.number_of_tissues\
          -H 0.1 -I 4 -l 20.0 -g -o t1.nii.gz $t1
-    scil_image_math.py convert t1_seg_2.nii.gz ${sid}__mask_wm.nii.gz --data_type uint8
-    scil_image_math.py convert t1_seg_1.nii.gz ${sid}__mask_gm.nii.gz --data_type uint8
-    scil_image_math.py convert t1_seg_0.nii.gz ${sid}__mask_csf.nii.gz --data_type uint8
+    scil_volume_math convert t1_seg_2.nii.gz ${sid}__mask_wm.nii.gz --data_type uint8
+    scil_volume_math convert t1_seg_1.nii.gz ${sid}__mask_gm.nii.gz --data_type uint8
+    scil_volume_math convert t1_seg_0.nii.gz ${sid}__mask_csf.nii.gz --data_type uint8
     mv t1_pve_2.nii.gz ${sid}__map_wm.nii.gz
     mv t1_pve_1.nii.gz ${sid}__map_gm.nii.gz
     mv t1_pve_0.nii.gz ${sid}__map_csf.nii.gz
@@ -1609,19 +1609,19 @@ process Compute_FRF {
         export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
         export OMP_NUM_THREADS=1
         export OPENBLAS_NUM_THREADS=1
-        scil_compute_ssst_frf.py $dwi $bval $bvec frf.txt --mask $b0_mask\
-        --fa $params.fa --min_fa $params.min_fa --min_nvox $params.min_nvox\
-        --roi_radii $params.roi_radius --force_b0_threshold
-        scil_set_response_function.py frf.txt $params.manual_frf ${sid}__frf.txt
+        scil_frf_ssst $dwi $bval $bvec frf.txt --mask $b0_mask\
+        --fa_thresh $params.fa --min_fa_thresh $params.min_fa --min_nvox $params.min_nvox\
+        --roi_radii $params.roi_radius --skip_b0_check
+        scil_frf_set_diffusivities frf.txt $params.manual_frf ${sid}__frf.txt
         """
     else
         """
         export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
         export OMP_NUM_THREADS=1
         export OPENBLAS_NUM_THREADS=1
-        scil_compute_ssst_frf.py $dwi $bval $bvec ${sid}__frf.txt --mask $b0_mask\
-        --fa $params.fa --min_fa $params.min_fa --min_nvox $params.min_nvox\
-        --roi_radii $params.roi_radius --force_b0_threshold
+        scil_frf_ssst $dwi $bval $bvec ${sid}__frf.txt --mask $b0_mask\
+        --fa_thresh $params.fa --min_fa_thresh $params.min_fa --min_nvox $params.min_nvox\
+        --roi_radii $params.roi_radius --skip_b0_check
         """
 }
 
@@ -1648,7 +1648,7 @@ process Mean_FRF {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_compute_mean_frf.py $all_frf mean_frf.txt
+    scil_frf_mean $all_frf mean_frf.txt
     """
 }
 
@@ -1688,13 +1688,13 @@ process FODF_Metrics {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_compute_ssst_fodf.py $dwi $bval $bvec $frf ${sid}__fodf.nii.gz\
-        --sh_order $params.sh_order --sh_basis $params.basis --force_b0_threshold\
+    scil_fodf_ssst $dwi $bval $bvec $frf ${sid}__fodf.nii.gz\
+        --sh_order $params.sh_order --sh_basis $params.basis --skip_b0_check\
         --mask $b0_mask --processes $task.cpus
 
-    scil_compute_fodf_max_in_ventricles.py ${sid}__fodf.nii.gz $fa $md\
+    scil_fodf_max_in_ventricles ${sid}__fodf.nii.gz $fa $md\
         --max_value_output ventricles_fodf_max_value.txt --sh_basis $params.basis\
-        --fa_t $params.max_fa_in_ventricle --md_t $params.min_md_in_ventricle\
+        --fa_threshold $params.max_fa_in_ventricle --md_threshold $params.min_md_in_ventricle\
         -f
 
     v_max=\$(sed -E 's/([+-]?[0-9.]+)[eE]\\+?(-?)([0-9]+)/(\\1*10^\\2\\3)/g' <<<"\$(cat ventricles_fodf_max_value.txt)")
@@ -1703,7 +1703,7 @@ process FODF_Metrics {
         a_threshold=0
     fi
 
-    scil_compute_fodf_metrics.py ${sid}__fodf.nii.gz\
+    scil_fodf_metrics ${sid}__fodf.nii.gz\
         --mask $b0_mask --sh_basis $params.basis\
         --peaks ${sid}__peaks.nii.gz --peak_indices ${sid}__peak_indices.nii.gz\
         --afd_max ${sid}__afd_max.nii.gz --afd_total ${sid}__afd_total.nii.gz\
@@ -1731,7 +1731,7 @@ process PFT_Tracking_Maps {
     export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
     export OMP_NUM_THREADS=1
     export OPENBLAS_NUM_THREADS=1
-    scil_compute_maps_for_particle_filter_tracking.py $wm $gm $csf \
+    scil_tracking_pft_maps $wm $gm $csf \
         --include ${sid}__map_include.nii.gz \
         --exclude ${sid}__map_exclude.nii.gz \
         --interface ${sid}__interface.nii.gz -f
@@ -1760,7 +1760,7 @@ process PFT_Seeding_Mask {
         export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
         export OMP_NUM_THREADS=1
         export OPENBLAS_NUM_THREADS=1
-        scil_image_math.py union $wm $interface_mask ${sid}__pft_seeding_mask.nii.gz\
+        scil_volume_math union $wm $interface_mask ${sid}__pft_seeding_mask.nii.gz\
             --data_type uint8
         """
     else if (params.pft_seeding_mask_type == "interface")
@@ -1803,7 +1803,7 @@ process PFT_Tracking {
         export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
         export OMP_NUM_THREADS=1
         export OPENBLAS_NUM_THREADS=1
-        scil_compute_pft.py $fodf $seed $include $exclude\
+        scil_tracking_pft $fodf $seed $include $exclude\
             tmp.trk\
             --algo $params.pft_algo --$params.pft_seeding $params.pft_nbr_seeds\
             --seed $curr_seed --step $params.pft_step --theta $params.pft_theta\
@@ -1811,7 +1811,7 @@ process PFT_Tracking {
             --min_length $params.pft_min_len --max_length $params.pft_max_len\
             --particles $params.pft_particles --back $params.pft_back\
             --forward $params.pft_front $compress --sh_basis $params.basis
-        scil_remove_invalid_streamlines.py tmp.trk\
+        scil_tractogram_remove_invalid tmp.trk\
             ${sid}__pft_tracking_${params.pft_algo}_${params.pft_seeding_mask_type}_seed_${curr_seed}.trk\
             --remove_single_point
         """
@@ -1908,15 +1908,15 @@ process Local_Tracking {
         export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=1
         export OMP_NUM_THREADS=1
         export OPENBLAS_NUM_THREADS=1
-        scil_compute_local_tracking.py $fodf $seed $tracking_mask\
+        scil_tracking_local $fodf $seed $tracking_mask\
             tmp.trk\
             --algo $params.local_algo --$params.local_seeding $params.local_nbr_seeds\
             --seed $curr_seed --step $params.local_step --theta $params.local_theta\
-            --sf $params.local_sfthres --min_length $params.local_min_len\
+            --sfthres $params.local_sfthres --min_length $params.local_min_len\
             --max_length $params.local_max_len $compress --sh_basis $params.basis\
             $use_gpu 
 
-        scil_remove_invalid_streamlines.py tmp.trk\
+        scil_tractogram_remove_invalid tmp.trk\
             ${sid}__local_tracking_${params.local_algo}_${params.local_seeding_mask_type}_seeding_${params.local_tracking_mask_type}_mask_seed_${curr_seed}.trk\
             --remove_single_point
         """
